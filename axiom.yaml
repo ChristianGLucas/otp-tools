@@ -1,0 +1,118 @@
+name: christiangeorgelucas/otp-tools
+version: 0.1.0
+language: go
+author: Christian George Lucas
+license: MIT
+description: >-
+  Composable Axiom nodes for RFC 6238 TOTP and RFC 4226 HOTP one-time
+  passwords — generate and verify codes (with configurable time/counter
+  drift windows), build and parse otpauth:// provisioning URIs, and generate
+  random base32 secrets — wrapping github.com/pquerna/otp (Apache-2.0), the
+  de-facto reference Go OTP implementation used by production systems
+  including HashiCorp Vault. Every op is stateless and deterministic — the
+  caller supplies the secret, timestamp/counter, and every parameter;
+  nothing is stored and the wall clock is never read. Verified against the
+  RFC 4226/6238 authors' own published test vectors and Google's own
+  Key-Uri-Format examples.
+tags:
+    - totp
+    - hotp
+    - otp
+    - 2fa
+    - mfa
+    - authenticator
+    - rfc6238
+    - rfc4226
+    - otpauth
+    - one-time-password
+nodes:
+    - name: GenerateTotpCode
+      description: >-
+        Computes an RFC 6238 TOTP code for a shared secret at one
+        caller-supplied point in time (unix seconds) — deterministic, never
+        reads the wall clock. Configurable period (default 30s), digits (6
+        or 8, default 6), HMAC algorithm (SHA1 default, SHA256, or SHA512),
+        and output alphabet (standard decimal, or Steam Guard's alphabet via
+        encoder="steam" — note the Steam encoder's length follows `digits`,
+        since the wrapped library has no separate 5-character mode).
+        Verified against the RFC 6238 Appendix B test vectors across all
+        three algorithms. Malformed input (a secret that fails to decode, or
+        an unsupported digits/algorithm/encoder) returns a structured error,
+        never a crash.
+      input: GenerateTotpCodeInput
+      output: OtpCode
+    - name: GenerateHotpCode
+      description: >-
+        Computes an RFC 4226 HOTP code for a shared secret at one
+        caller-supplied counter value — deterministic. Same
+        digits/algorithm/encoder options as GenerateTotpCode. Verified
+        against the RFC 4226 Appendix D test vectors. Malformed input
+        returns a structured error, never a crash.
+      input: GenerateHotpCodeInput
+      output: OtpCode
+    - name: ValidateTotpCode
+      description: >-
+        Verifies a caller-submitted TOTP code against a shared secret at a
+        caller-supplied "now", tolerating up to `skew` time-steps of clock
+        drift on either side (RFC 6238 section 5.2) — checks the exact step
+        first, then alternates ±1, ±2, ... out to skew, and reports which
+        offset matched so a caller can detect a persistently-drifted client
+        clock. skew is presence-tracked (0 explicitly means
+        exact-match-only, distinct from omitting the field, which defaults
+        to 1) and capped at 100. A well-formed code that simply does not
+        match is a normal result (valid=false, error empty); error is
+        reserved for malformed input. Verified against the RFC 6238
+        Appendix B vectors.
+      input: ValidateTotpCodeInput
+      output: TotpValidationResult
+    - name: ValidateHotpCode
+      description: >-
+        Verifies a caller-submitted HOTP code against a shared secret and a
+        stored counter, tolerating the token having been used up to
+        `look_ahead_window` counter values ahead of what the caller has
+        recorded (RFC 4226 section 7.4 resynchronization). look_ahead_window
+        is presence-tracked (0 explicitly means exact-counter-only, distinct
+        from omitting the field, which defaults to 10) and capped at 1000.
+        On a match, the caller MUST persist matched_counter+1 to prevent the
+        same code being replayed. A well-formed code that matches nothing
+        in the window is a normal result (valid=false, error empty).
+        Verified against the RFC 4226 Appendix D vectors.
+      input: ValidateHotpCodeInput
+      output: HotpValidationResult
+    - name: GenerateRandomSecret
+      description: >-
+        Generates a fresh shared secret (default 20 bytes / 160 bits, 1-256
+        configurable), base32-encoded and ready for any other node's
+        OtpSecret or for BuildProvisioningUri. With `entropy` left empty
+        (the normal use — actually provisioning a new 2FA credential) the
+        bytes come from crypto/rand, a CSPRNG, exactly like pquerna/otp's
+        own totp.Generate/hotp.Generate. Supplying `entropy` explicitly
+        (exactly byte_length bytes) instead makes generation a pure
+        deterministic function of the input, for tests and reproducible
+        fixtures — verified against the RFC 4648 section 10 base32 test
+        vectors — and is never appropriate for a real credential.
+      input: GenerateRandomSecretInput
+      output: RandomSecretResult
+    - name: BuildProvisioningUri
+      description: >-
+        Builds an "otpauth://totp/..." or "otpauth://hotp/..." Key URI —
+        the payload authenticator apps (Google Authenticator, Authy,
+        1Password, ...) scan from a QR code to enroll a new credential, per
+        the Key-Uri-Format spec. issuer and account_name are required and
+        must not contain a colon. Verified byte-for-byte against Google's
+        own published Key-Uri-Format wiki example. Malformed input returns a
+        structured error, never a crash.
+      input: BuildProvisioningUriInput
+      output: ProvisioningUriResult
+    - name: ParseProvisioningUri
+      description: >-
+        Parses an "otpauth://..." Key URI (from a scanned QR code, or a URI
+        a caller already has) back into its components — the inverse of
+        BuildProvisioningUri, applying the same issuer/account-label
+        precedence and field defaults the Key-Uri-Format spec defines.
+        Bounded to 8 KiB. Verified against Google's own published
+        Key-Uri-Format wiki example. Malformed input (not a URI, wrong
+        scheme, unrecognized host) returns a structured error, never a
+        crash.
+      input: ParseProvisioningUriInput
+      output: ProvisioningUriRecord

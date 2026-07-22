@@ -1,0 +1,291 @@
+// Data contracts for christiangeorgelucas/otp-tools.
+//
+// This package wraps github.com/pquerna/otp (Apache-2.0), the de-facto
+// reference Go implementation of RFC 6238 (TOTP) and RFC 4226 (HOTP), used
+// by production systems including HashiCorp Vault.
+//
+// There is no single canonical envelope shared end-to-end by every node the
+// way an image/graph/document package has one — TOTP generate, HOTP
+// validate, and otpauth:// URI build/parse are genuinely different shapes.
+// Instead, every node that consumes a shared secret takes the same
+// `OtpSecret` sub-message, and every code follows the same algorithm/digits
+// vocabulary — the same "align the boundary, don't force one shape"
+// convention used by christiangeorgelucas/hash-tools and
+// christiangeorgelucas/crypto-tools (which already standardize on
+// utf8/hex/base64/base64url for secret bytes). `OtpSecret` adds "base32" as
+// the default, since that is the RFC 4226 §4 / Key-Uri-Format convention
+// authenticator apps expect — so key material minted by hash-tools' Hkdf
+// (hex/base64 output) plugs in directly via encoding, without a conversion
+// step.
+//
+// SECURITY NOTE: every OtpSecret.value here is caller-supplied DATA — a
+// shared secret the caller already possesses, not a platform credential.
+// Nodes never log the raw secret value.
+//
+// NOTE ON DOC COMMENTS: every field comment in this file is a LEADING
+// comment (on its own line, above the field). Trailing comments are
+// discarded by the schema compiler and never reach the registry.
+
+syntax = "proto3";
+
+package christiangeorgelucas.otp_tools;
+
+option go_package = ".;gen";
+
+// A shared secret in a caller-chosen encoding — the key material an HMAC-
+// based OTP is computed over. Shared by every node in this package that
+// consumes a secret.
+message OtpSecret {
+  // The secret's bytes, encoded as `encoding` below.
+  string value = 1;
+  // How `value` is encoded: "base32" (default when empty — RFC 4226/6238's
+  // own convention, and what otpauth:// URIs and authenticator apps expect;
+  // tolerant of missing padding and lowercase, matching real-world
+  // Authenticator output), "hex", "base64", "base64url", or "utf8" (the
+  // literal text bytes). Case-insensitive.
+  string encoding = 2;
+}
+
+// Request to compute a TOTP (RFC 6238) code at one point in time.
+message GenerateTotpCodeInput {
+  // The shared secret.
+  OtpSecret secret = 1;
+  // Unix time (seconds) to generate the code for. REQUIRED and always
+  // caller-supplied — this node never reads the wall clock, so the same
+  // input always yields the same code.
+  int64 timestamp_unix = 2;
+  // Time-step size in seconds. Defaults to 30 (the RFC 6238 / Google
+  // Authenticator standard) when 0.
+  uint32 period_seconds = 3;
+  // Number of digits in the code: 6 or 8. Defaults to 6 when 0.
+  int32 digits = 4;
+  // HMAC hash algorithm: "SHA1" (default — required for compatibility with
+  // Google Authenticator and most authenticator apps), "SHA256", or
+  // "SHA512". Case-insensitive.
+  string algorithm = 5;
+  // Output alphabet: "" / "standard" (default — decimal digits, zero-padded
+  // to `digits`) or "steam" (Steam Guard's 10-character alphabet, using
+  // `digits` characters — real Steam Guard codes are conventionally 5
+  // characters, so pass digits=6 or 8 and take the low-order characters if
+  // you need exactly 5; this node reports the full length it produced).
+  string encoder = 6;
+}
+
+// A generated or otherwise-produced OTP code.
+message OtpCode {
+  // The code: zero-padded to the requested digit count for the "standard"
+  // encoder, or `digits` characters from the Steam Guard alphabet for
+  // "steam" — either way, its length always equals the request's digits (6
+  // or 8).
+  string code = 1;
+  // Set, with `code` empty, when the input was malformed (bad secret
+  // encoding, invalid digits/algorithm/encoder). Never a crash.
+  string error = 2;
+}
+
+// Request to compute an HOTP (RFC 4226) code for one counter value.
+message GenerateHotpCodeInput {
+  // The shared secret.
+  OtpSecret secret = 1;
+  // The moving factor (event counter). Any uint64 value.
+  uint64 counter = 2;
+  // Number of digits in the code: 6 or 8. Defaults to 6 when 0.
+  int32 digits = 3;
+  // HMAC hash algorithm: "SHA1" (default), "SHA256", or "SHA512".
+  // Case-insensitive.
+  string algorithm = 4;
+  // Output alphabet: "" / "standard" (default) or "steam".
+  string encoder = 5;
+}
+
+// Request to verify a caller-submitted TOTP code, tolerating clock drift.
+message ValidateTotpCodeInput {
+  // The code as submitted by the end user.
+  string code = 1;
+  // The shared secret.
+  OtpSecret secret = 2;
+  // Unix time (seconds) "now" is, from the CALLER's perspective — this node
+  // never reads the wall clock, so validation is fully deterministic and
+  // reproducible given the same inputs.
+  int64 timestamp_unix = 3;
+  // Time-step size in seconds. Defaults to 30 when 0.
+  uint32 period_seconds = 4;
+  // Number of digits: 6 or 8. Defaults to 6 when 0.
+  int32 digits = 5;
+  // HMAC hash algorithm: "SHA1" (default), "SHA256", or "SHA512".
+  string algorithm = 6;
+  // Output alphabet: "" / "standard" (default) or "steam".
+  string encoder = 7;
+  // How many time-steps of drift, each direction, to tolerate (checks
+  // timestamp_unix and up to `skew` steps before/after it). Presence-tracked
+  // (proto3 `optional`), NOT a sentinel value, because 0 is a meaningful
+  // request ("exact match only, no drift tolerance") distinct from omitting
+  // the field (which defaults to 1). Capped at 100 — larger values widen the
+  // acceptance window far past any realistic clock drift.
+  optional uint32 skew = 8;
+}
+
+// Result of validating a TOTP code.
+message TotpValidationResult {
+  // True if `code` matches at timestamp_unix or within the skew window.
+  bool valid = 1;
+  // Which time-step offset matched: 0 = exact, negative = a past step,
+  // positive = a future step. Only meaningful when valid=true; 0 otherwise.
+  int32 matched_skew = 2;
+  // Set, with valid=false, only for malformed input (bad secret encoding,
+  // wrong-length code, invalid digits/algorithm/encoder) — never a crash. A
+  // well-formed code that simply does not match is valid=false with error
+  // empty, not an error.
+  string error = 3;
+}
+
+// Request to verify a caller-submitted HOTP code against a counter,
+// tolerating the caller's counter having fallen behind the token's (the
+// standard HOTP "look-ahead window" from RFC 4226 §7.4).
+message ValidateHotpCodeInput {
+  // The code as submitted by the end user.
+  string code = 1;
+  // The shared secret.
+  OtpSecret secret = 2;
+  // The counter value the caller has stored (the next expected counter).
+  uint64 counter = 3;
+  // Number of digits: 6 or 8. Defaults to 6 when 0.
+  int32 digits = 4;
+  // HMAC hash algorithm: "SHA1" (default), "SHA256", or "SHA512".
+  string algorithm = 5;
+  // Output alphabet: "" / "standard" (default) or "steam".
+  string encoder = 6;
+  // How many counter values ahead of `counter` to try (checks counter,
+  // counter+1, ... counter+look_ahead_window). Presence-tracked (proto3
+  // `optional`), NOT a sentinel value, because 0 is a meaningful request
+  // ("exact counter only, no look-ahead") distinct from omitting the field
+  // (which defaults to 10). Capped at 1000.
+  optional uint32 look_ahead_window = 7;
+}
+
+// Result of validating an HOTP code.
+message HotpValidationResult {
+  // True if `code` matches some counter in [counter, counter+window].
+  bool valid = 1;
+  // The counter value that actually matched. Only meaningful when
+  // valid=true. The caller MUST persist matched_counter+1 as the new stored
+  // counter to prevent the matched code being replayed.
+  uint64 matched_counter = 2;
+  // matched_counter - input.counter. Only meaningful when valid=true.
+  uint32 offset = 3;
+  // Set, with valid=false, only for malformed input — never a crash. A
+  // well-formed code that matches nothing in the window is valid=false with
+  // error empty.
+  string error = 4;
+}
+
+// Request for a fresh random shared secret.
+message GenerateRandomSecretInput {
+  // Secret length in bytes. Defaults to 20 (160 bits — pquerna/otp's own
+  // TOTP default, comfortably above RFC 4226 §4's 128-bit minimum) when 0.
+  // Must be between 1 and 256.
+  uint32 byte_length = 1;
+  // Optional caller-supplied entropy, exactly byte_length bytes, used
+  // verbatim instead of reading the CSPRNG — for deterministic/repeatable
+  // generation (e.g. tests). Leave empty for a real random secret, which is
+  // the intended use for actually provisioning a 2FA credential: this node
+  // then reads crypto/rand (a CSPRNG), never math/rand and never a
+  // predictable seed.
+  bytes entropy = 2;
+}
+
+// A freshly generated shared secret.
+message RandomSecretResult {
+  // The secret, base32-encoded (no padding) — ready to hand to any other
+  // node's OtpSecret.value with encoding="base32", or to embed in an
+  // otpauth:// URI via BuildProvisioningUri.
+  string secret_base32 = 1;
+  // The secret's length in bytes (echoes byte_length, resolved for the
+  // default case).
+  uint32 byte_length = 2;
+  // Set, with secret_base32 empty, only for malformed input (out-of-range
+  // byte_length, or entropy present but the wrong length) — never a crash.
+  string error = 3;
+}
+
+// Request to build a Key URI ("otpauth://...") — the standard QR-code
+// payload authenticator apps (Google Authenticator, Authy, 1Password, ...)
+// scan to enroll a new TOTP/HOTP credential.
+message BuildProvisioningUriInput {
+  // "totp" or "hotp", case-insensitive. Required.
+  string type = 1;
+  // The issuing organization/service name (shown in the authenticator app).
+  // Required, non-empty, and must not contain a colon.
+  string issuer = 2;
+  // The account label, typically an email or username. Required,
+  // non-empty, and must not contain a colon.
+  string account_name = 3;
+  // The shared secret to embed (re-encoded as base32 in the URI regardless
+  // of OtpSecret.encoding).
+  OtpSecret secret = 4;
+  // HMAC hash algorithm: "SHA1" (default — omit this for maximum client
+  // compatibility; many authenticator apps ignore non-SHA1 anyway), "SHA256",
+  // or "SHA512".
+  string algorithm = 5;
+  // Number of digits: 6 or 8. Defaults to 6 when 0.
+  int32 digits = 6;
+  // TOTP only: time-step size in seconds. Defaults to 30 when 0. Ignored
+  // for type="hotp".
+  uint32 period_seconds = 7;
+  // HOTP only: the starting counter value to embed. Ignored for
+  // type="totp".
+  uint64 counter = 8;
+}
+
+// A built provisioning URI.
+message ProvisioningUriResult {
+  // The "otpauth://totp/..." or "otpauth://hotp/..." URI.
+  string uri = 1;
+  // Set, with uri empty, only for malformed input (bad type, empty/invalid
+  // issuer or account_name, bad secret encoding) — never a crash.
+  string error = 2;
+}
+
+// Request to parse a Key URI back into its components — the inverse of
+// BuildProvisioningUri, for reading a QR code a user scanned or a URI a
+// caller already has.
+message ParseProvisioningUriInput {
+  // An "otpauth://..." URI. Bounded to 8 KiB — real provisioning URIs are a
+  // few hundred bytes.
+  string uri = 1;
+}
+
+// A parsed Key URI.
+message ProvisioningUriRecord {
+  // "totp" or "hotp", read from the URI host.
+  string type = 1;
+  // The issuer, preferring the "issuer" query parameter and falling back to
+  // the label prefix before ":" (the same precedence real authenticator
+  // apps use), per the Key-Uri-Format spec.
+  string issuer = 2;
+  // The account label, the part of the path label after ":" (or the whole
+  // label if there is no ":").
+  string account_name = 3;
+  // The embedded secret, verbatim as base32 (not decoded — round-trips
+  // directly into any other node's OtpSecret with encoding="base32").
+  string secret_base32 = 4;
+  // The algorithm as declared in the URI, or "SHA1" per the spec default
+  // when absent.
+  string algorithm = 5;
+  // The digit count as declared in the URI, or 6 per the spec default when
+  // absent.
+  int32 digits = 6;
+  // The period as declared in the URI, or 30 per the spec default when
+  // absent. Meaningful for type="totp".
+  uint32 period_seconds = 7;
+  // The counter as declared in the URI's "counter" query parameter.
+  // Meaningful only when has_counter=true (type="hotp" URIs are supposed to
+  // carry one, but this reports what was actually present rather than
+  // assuming).
+  uint64 counter = 8;
+  // Whether a "counter" query parameter was present in the URI.
+  bool has_counter = 9;
+  // Set, with every other field empty/zero, only for malformed input (not
+  // a valid URI, wrong scheme, unrecognized host/type) — never a crash.
+  string error = 10;
+}
