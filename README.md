@@ -1,6 +1,6 @@
 # christiangeorgelucas/otp-tools
 
-Composable [Axiom](https://axiom.co) nodes for RFC 6238 TOTP and RFC 4226 HOTP
+Composable [Axiom](https://axiomide.com) nodes for RFC 6238 TOTP and RFC 4226 HOTP
 one-time passwords — the codes used by authenticator apps (Google
 Authenticator, Authy, 1Password, Steam Guard, ...) for two-factor
 authentication. Built for the Axiom marketplace.
