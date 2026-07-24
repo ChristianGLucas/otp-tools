@@ -13,10 +13,6 @@ var (
 	errUnknownType   = errors.New(`uri host must be "totp" or "hotp"`)
 )
 
-// maxUriBytes bounds a URI to parse before any parsing work — real
-// provisioning URIs are a few hundred bytes; this is generous headroom.
-const maxUriBytes = 8192
-
 // encodeOtpauthQuery mirrors pquerna/otp's internal query encoder (which is
 // Go's stdlib url.Values.Encode with %20 instead of + for spaces — needed
 // for some authenticator apps to render an issuer/account with a space

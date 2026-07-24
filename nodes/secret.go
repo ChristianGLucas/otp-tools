@@ -22,11 +22,6 @@ import (
 // otpauth:// URIs and authenticator apps expect.
 var b32NoPad = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// maxSecretBytes bounds every decoded secret before any further processing —
-// an input-controlled dimension that must be capped on the raw input, not
-// after allocation. 64 KiB is far beyond any realistic HMAC key.
-const maxSecretBytes = 65536
-
 // decodeSecret turns a caller-supplied OtpSecret into raw key bytes,
 // honoring `encoding` (default "base32" when empty). Returns a plain error
 // with a short, non-sensitive message — callers must never echo the raw
@@ -40,11 +35,6 @@ func decodeSecret(s *gen.OtpSecret) ([]byte, error) {
 		enc = "base32"
 	}
 	v := s.GetValue()
-	if len(v) > maxSecretBytes*2 {
-		// Cheap guard on the raw, un-decoded input before any decode work —
-		// every listed encoding expands at most ~2x on the wire.
-		return nil, errors.New("secret.value is too large")
-	}
 
 	var out []byte
 	var err error
@@ -73,9 +63,6 @@ func decodeSecret(s *gen.OtpSecret) ([]byte, error) {
 	}
 	if len(out) == 0 {
 		return nil, errors.New("secret decodes to zero bytes")
-	}
-	if len(out) > maxSecretBytes {
-		return nil, errors.New("secret.value is too large")
 	}
 	return out, nil
 }

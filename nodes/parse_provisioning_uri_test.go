@@ -99,10 +99,15 @@ func TestParseProvisioningUri_WrongSchemeIsRejected(t *testing.T) {
 	}
 }
 
-func TestParseProvisioningUri_OversizedUriIsRejected(t *testing.T) {
+// Payload size is the platform's job, not the node's (ADR: node = pure
+// input->output function). This exercises a URI far larger than the
+// package's old, now-removed 8 KiB cap and asserts only that the node
+// handles it without crashing — a well-formed large URI parses fine, and a
+// malformed one still comes back as a structured error, never a panic.
+func TestParseProvisioningUri_LargeUriDoesNotCrash(t *testing.T) {
 	ctx := context.Background()
 	ax := newTestContext(t)
-	big := make([]byte, 9000)
+	big := make([]byte, 200000)
 	for i := range big {
 		big[i] = 'a'
 	}
@@ -112,7 +117,13 @@ func TestParseProvisioningUri_OversizedUriIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
-	if got.Error == "" {
-		t.Errorf("want a structured error for a uri exceeding the 8 KiB cap, got none")
+	if got == nil {
+		t.Fatalf("want a non-nil result for a large uri, got nil")
+	}
+	if got.Error != "" {
+		t.Errorf("large-but-well-formed uri should parse, got structured error: %s", got.Error)
+	}
+	if got.AccountName != string(big) {
+		t.Errorf("account name mismatch on large input: got %d bytes, want %d", len(got.AccountName), len(big))
 	}
 }

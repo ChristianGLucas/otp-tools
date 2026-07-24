@@ -10,9 +10,6 @@ import (
 	gen "christiangeorgelucas/otp-tools/gen"
 )
 
-// maxSecretGenBytes bounds the requested length before any allocation.
-const maxSecretGenBytes = 256
-
 // Generates a fresh shared secret, base32-encoded and ready to hand to any
 // other node's OtpSecret or embed via BuildProvisioningUri. With `entropy`
 // left empty (the normal, intended use — actually provisioning a new 2FA
@@ -26,9 +23,6 @@ func GenerateRandomSecret(ctx context.Context, ax axiom.Context, input *gen.Gene
 	length := input.GetByteLength()
 	if length == 0 {
 		length = 20
-	}
-	if length > maxSecretGenBytes {
-		return &gen.RandomSecretResult{Error: fmt.Sprintf("byte_length exceeds the maximum of %d", maxSecretGenBytes)}, nil
 	}
 
 	var secret []byte
